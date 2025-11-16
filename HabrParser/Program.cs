@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using HtmlAgilityPack;
 
 namespace HabrParser;
@@ -9,7 +9,7 @@ class Program
   {
     const string baseUrl = "https://habr.com";
     const string hubUrl = "/ru/hub/net/"; // URL хаба .NET
-    int pagesToParse = 5; // Количество страниц для анализа
+    int pagesToParse = 245; // Количество страниц для анализа
 
     var articles = new List<Article>();
 
