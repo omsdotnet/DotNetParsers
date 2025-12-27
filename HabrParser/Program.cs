@@ -1,177 +1,414 @@
 using System.Globalization;
 using HtmlAgilityPack;
+using Newtonsoft.Json;
 
 namespace HabrParser;
 
-class Program
+internal class Program
 {
-  static async Task Main(string[] args)
-  {
-    const string baseUrl = "https://habr.com";
-    const string hubUrl = "/ru/hub/net/"; // URL хаба .NET
-    int pagesToParse = 245; // Количество страниц для анализа
-
-    var articles = new List<Article>();
-
-    using (var client = new HttpClient())
+    private static async Task Main(string[] args)
     {
-      client.BaseAddress = new Uri(baseUrl);
-      client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        //var articlesDotNetTask = DownloadHubArticles("net", 247);
+        //var articlesCSharpTask = DownloadHubArticles("csharp", 176);
+        var articlesDotNetTask = GetHubArticles("net");
+        var articlesCSharpTask = GetHubArticles("csharp");
 
-      for (int page = 1; page <= pagesToParse; page++)
-      {
-        string url = $"{hubUrl}page{page}/";
-        try
+        await Task.WhenAll([articlesCSharpTask, articlesDotNetTask]);
+
+        var articlesCSharp = await articlesCSharpTask;
+        var articlesDotNet = await articlesDotNetTask;
+
+
+        var articlesCSharp2025 = articlesCSharp.Where(x => x.Date is {Year: 2025}).ToList();
+        var articlesDotNet2025 = articlesDotNet.Where(x => x.Date is {Year: 2025}).ToList();
+
+        var articlesOnlyCSharp = articlesCSharp2025.Where(x => articlesDotNet2025.All(y => y.Id != x.Id)).ToList();
+        var articlesOnlyDotNet = articlesDotNet2025.Where(x => articlesCSharp2025.All(y => y.Id != x.Id)).ToList();
+        var articlesCommon = articlesDotNet2025.Where(x => articlesCSharp2025.Any(y => y.Id == x.Id)).ToList();
+        var allArticles = articlesOnlyCSharp.Union(articlesCommon).Union(articlesOnlyDotNet).ToList();
+        Console.WriteLine(
+            $"Общее количество статей по хабам .NET-общее-C#: {articlesOnlyDotNet.Count()}-{articlesCommon.Count()}-{articlesOnlyCSharp.Count()} = {allArticles.Count()}");
+
+
+        articlesCSharp2025 = articlesCSharp2025.Where(x => !string.IsNullOrWhiteSpace(x.CompanyName)).ToList();
+        articlesDotNet2025 = articlesDotNet2025.Where(x => !string.IsNullOrWhiteSpace(x.CompanyName)).ToList();
+
+        articlesOnlyCSharp = articlesCSharp2025.Where(x => articlesDotNet2025.All(y => y.Id != x.Id)).ToList();
+        articlesOnlyDotNet = articlesDotNet2025.Where(x => articlesCSharp2025.All(y => y.Id != x.Id)).ToList();
+        articlesCommon = articlesDotNet2025.Where(x => articlesCSharp2025.Any(y => y.Id == x.Id)).ToList();
+        allArticles = articlesOnlyCSharp.Union(articlesCommon).Union(articlesOnlyDotNet).ToList();
+        Console.WriteLine(
+            $"Общее количество статей от компаний по хабам .NET-общее-C#: {articlesOnlyDotNet.Count()}-{articlesCommon.Count()}-{articlesOnlyCSharp.Count()} = {allArticles.Count()}");
+
+
+        ShowStatistics(allArticles);
+    }
+
+    private static async Task<List<Article>> DownloadHubArticles(string hubName, int pagesToParse)
+    {
+        var articles = new List<Article>();
+
+        var baseUrl = "https://habr.com";
+        var hubUrl = $"/ru/hub/{hubName}/";
+
+        Directory.CreateDirectory(hubName);
+
+        using (var client = new HttpClient())
         {
-          Console.WriteLine($"Парсинг страницы: {url}");
-          var html = await client.GetStringAsync(url);
-          var doc = new HtmlDocument();
-          doc.LoadHtml(html);
+            client.BaseAddress = new Uri(baseUrl);
+            client.DefaultRequestHeaders.Add("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
-          var articleNodes = doc.DocumentNode.SelectNodes("//article[contains(@class, 'tm-articles-list__item')]");
-
-          if (articleNodes == null)
-          {
-            Console.WriteLine($"На странице {page} не найдено статей.");
-            continue;
-          }
-
-          foreach (var node in articleNodes)
-          {
-            var titleNode = node.SelectSingleNode(".//a[contains(@class, 'tm-title__link')]");
-            var authorNode = node.SelectSingleNode(".//a[contains(@class, 'tm-user-info__username')]");
-            var dateNode = node.SelectSingleNode(".//time");
-            var ratingNode = node.SelectSingleNode(".//span[contains(@class, 'tm-votes-meter__value')]");
-            var viewsNode = node.SelectSingleNode(".//span[contains(@class, 'tm-icon-counter__value')]");
-            var commentsNode = node.SelectSingleNode(".//span[contains(@class, 'tm-article-comments-counter-link__value')]");
-
-            var article = new Article
+            for (var page = 1; page <= pagesToParse; page++)
             {
-              Title = titleNode?.InnerText.Trim(),
-              Link = titleNode?.GetAttributeValue("href", ""),
-              Author = authorNode?.InnerText.Trim(),
-              Date = dateNode?.GetAttributeValue("datetime", null) is string dateStr ? DateTime.Parse(dateStr) : (DateTime?)null,
-              Rating = ratingNode != null && int.TryParse(ratingNode.InnerText.Trim(), out int rating) ? rating : 0,
-              Views = viewsNode != null && int.TryParse(viewsNode.InnerText.Trim(), NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out int views) ? views : 0,
-              Comments = commentsNode != null && int.TryParse(commentsNode.InnerText.Trim(), NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out int comments) ? comments : 0
-            };
+                var url = $"{hubUrl}page{page}/";
+                try
+                {
+                    Console.WriteLine($"Парсинг страницы: {url}");
+                    var html = await client.GetStringAsync(url);
+                    var doc = new HtmlDocument();
+                    doc.LoadHtml(html);
 
-            if (!string.IsNullOrEmpty(article.Link) && !article.Link.StartsWith("http"))
-            {
-              article.Link = baseUrl + article.Link;
+                    var articleNodes =
+                        doc.DocumentNode.SelectNodes("//article[contains(@class, 'tm-articles-list__item')]");
+
+                    if (articleNodes == null)
+                    {
+                        Console.WriteLine($"На странице {page} не найдено статей.");
+                        continue;
+                    }
+
+                    foreach (var node in articleNodes)
+                    {
+                        var titleNode = node.SelectSingleNode(".//a[contains(@class, 'tm-title__link')]");
+                        var authorNode = node.SelectSingleNode(".//a[contains(@class, 'tm-user-info__username')]");
+                        var dateNode = node.SelectSingleNode(".//time");
+                        var ratingNode = node.SelectSingleNode(".//span[contains(@class, 'tm-votes-meter__value')]");
+                        var viewsNode = node.SelectSingleNode(".//span[contains(@class, 'tm-icon-counter__value')]");
+                        var commentsNode =
+                            node.SelectSingleNode(".//a[contains(@class, 'article-comments-counter-link')]")
+                                .SelectSingleNode(".//span[contains(@class, 'value')]");
+                        var companyNode = node.SelectSingleNode(".//div[contains(@class, 'tm-publication-hubs')]")
+                            ?.SelectSingleNode(".//span[contains(text(), 'Блог компании')]");
+
+
+                        var article = new Article
+                        {
+                            Title = titleNode?.InnerText.Trim(),
+                            Link = titleNode?.GetAttributeValue("href", ""),
+                            Author = authorNode?.InnerText.Trim(),
+                            Date =
+                                dateNode?.GetAttributeValue("datetime", null) is string dateStr
+                                    ? DateTime.Parse(dateStr)
+                                    : null,
+                            Rating =
+                                ratingNode != null && int.TryParse(ratingNode.InnerText.Trim(), out var rating)
+                                    ? rating
+                                    : 0,
+                            Views = ConvertToInt(viewsNode?.InnerText.Trim()),
+                            Comments = commentsNode != null && int.TryParse(commentsNode.InnerText.Trim(),
+                                NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var comments)
+                                ? comments
+                                : 0,
+                            CompanyName = companyNode?.InnerText.Replace("Блог компании", "").Trim()
+                        };
+
+                        if (!string.IsNullOrEmpty(article.Link) && !article.Link.StartsWith("http"))
+                        {
+                            article.Link = baseUrl + article.Link;
+                        }
+
+                        if (!string.IsNullOrEmpty(article.Link))
+                        {
+                            var linkUri = new Uri(article.Link.TrimEnd('/'));
+                            article.Id = linkUri.Segments[^1].Replace("/", "");
+                        }
+
+                        var articleJsonString = JsonConvert.SerializeObject(article, Formatting.Indented);
+                        var fileName = $"{hubName}/{article.Id}.json";
+                        await File.WriteAllTextAsync(fileName, articleJsonString);
+
+                        articles.Add(article);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка при парсинге страницы {page}: {ex.Message}");
+                }
             }
-
-            articles.Add(article);
-          }
         }
-        catch (Exception ex)
+
+        if (!articles.Any())
         {
-          Console.WriteLine($"Ошибка при парсинге страницы {page}: {ex.Message}");
+            Console.WriteLine("Не удалось получить данные. Проверьте подключение к интернету или структуру сайта.");
+            return articles;
         }
-      }
+
+        return articles;
     }
 
-    if (!articles.Any())
+    private static async Task<List<Article>> GetHubArticles(string hubName)
     {
-      Console.WriteLine("Не удалось получить данные. Проверьте подключение к интернету или структуру сайта.");
-      return;
+        var articles = new List<Article>();
+
+        var files = Directory.GetFiles(hubName);
+
+        foreach (var file in files)
+        {
+            var article = JsonConvert.DeserializeObject<Article>(await File.ReadAllTextAsync(file));
+            if (article != null)
+            {
+                articles.Add(article);
+            }
+        }
+
+        return articles;
     }
 
-    // Формирование статистики
-    Console.WriteLine("\n=== СТАТИСТИКА ПО ХАБУ .NET ===\n");
-
-    // 1. Общее количество статей
-    Console.WriteLine($"1. Общее количество статей: {articles.Count}");
-
-    // 2. Самые популярные статьи по рейтингу
-    var topRated = articles.OrderByDescending(a => a.Rating).Take(5);
-    Console.WriteLine("\n2. Топ-5 статей по рейтингу:");
-    foreach (var article in topRated)
+    private static void ShowStatistics(List<Article> allArticles)
     {
-      Console.WriteLine($"   - {article.Title} (Рейтинг: {article.Rating})");
+        // Самые популярные статьи по рейтингу
+        var topRated = allArticles.OrderByDescending(a => a.Rating).Take(5);
+        Console.WriteLine("\nТоп-5 статей по рейтингу:");
+        foreach (var article in topRated)
+        {
+            Console.WriteLine($"   - {article.CompanyName}: {article.Title} (Рейтинг: {article.Rating})");
+        }
+
+        // Самые обсуждаемые статьи
+        var mostCommented = allArticles.OrderByDescending(a => a.Comments).Take(5);
+        Console.WriteLine("\nТоп-5 статей по количеству комментариев:");
+        foreach (var article in mostCommented)
+        {
+            Console.WriteLine($"   - {article.CompanyName}: {article.Title} (Комментарии: {article.Comments})");
+        }
+
+        // Самые просматриваемые статьи
+        var mostViewed = allArticles.OrderByDescending(a => a.Views).Take(5);
+        Console.WriteLine("\nТоп-5 статей по просмотрам:");
+        foreach (var article in mostViewed)
+        {
+            Console.WriteLine($"   - {article.CompanyName}: {article.Title} (Просмотры: {article.Views})");
+        }
+
+        // Средние показатели
+        Console.WriteLine("\nСредние показатели:");
+        Console.WriteLine($"   - Средний рейтинг: {allArticles.Average(a => a.Rating):F2}");
+        Console.WriteLine($"   - Среднее количество комментариев: {allArticles.Average(a => a.Comments):F0}");
+        Console.WriteLine($"   - Среднее количество просмотров: {allArticles.Average(a => a.Views):F0}");
+
+        // Общая сумма просмотров и комментариев
+        Console.WriteLine("\nСуммарные показатели:");
+        Console.WriteLine($"   - Всего комментариев: {allArticles.Sum(a => a.Comments)}");
+        Console.WriteLine($"   - Всего просмотров: {allArticles.Sum(a => a.Views)}");
+
+
+        var separator = new string('-', 12);
+
+        // Статистика по месяцам
+        var articlesByMonth = allArticles.Where(a => a.Date.HasValue)
+            .GroupBy(a => new {a.Date.Value.Year, a.Date.Value.Month})
+            .Select(g => new
+            {
+                g.Key.Year,
+                g.Key.Month,
+                Count = g.Count(),
+                Rating = g.Average(p => p.Rating),
+                Comments = g.Average(p => p.Comments),
+                Views = g.Average(p => p.Views)
+            })
+            .OrderBy(x => x.Year)
+            .ThenBy(x => x.Month);
+        Console.WriteLine("\nКоличество статей по месяцам:");
+        Console.WriteLine();
+        Console.WriteLine("|{0,-10}|{1,-10}|{2,-12}|{3,-12}|{4,-12}|{5,-12}|",
+            "Год",
+            "Месяц",
+            "Статей",
+            "Рейтинг",
+            "Комментариев",
+            "Просмотров");
+        Console.WriteLine("|{0,-10}|{1,-10}|{2,-12}|{3,-12}|{4,-12}|{5,-12}|",
+            new string('-', 10),
+            new string('-', 10),
+            separator,
+            separator,
+            separator,
+            separator);
+        foreach (var group in articlesByMonth)
+        {
+            Console.WriteLine("|{0,-10}|{1,-10}|{2,-12}|{3,-12}|{4,-12}|{5,-12}|",
+                group.Year,
+                group.Month,
+                group.Count,
+                (int)Math.Round(group.Rating),
+                (int)Math.Round(group.Comments),
+                (int)Math.Round(group.Views));
+        }
+
+        // Статистика по компаниям
+        var companies = allArticles.GroupBy(a => a.CompanyName)
+            .Select(g => new
+            {
+                CompanyName = g.Key,
+                Count = g.Count(),
+                Rating = g.Average(p => p.Rating),
+                Comments = g.Average(p => p.Comments),
+                Views = g.Average(p => p.Views)
+            })
+            .OrderByDescending(x => x.Count)
+            .ThenByDescending(x => x.Rating)
+            .ThenByDescending(x => x.Comments)
+            .ThenByDescending(x => x.Views)
+            .ThenBy(x => x.CompanyName)
+            .ToList();
+        Console.WriteLine("\nСтатистика по компаниям:");
+        Console.WriteLine();
+        Console.WriteLine("|{0,-40}|{1,-12}|{2,-12}|{3,-12}|{4,-12}|",
+            "Название компании",
+            "Статей",
+            "Рейтинг",
+            "Комментариев",
+            "Просмотров");
+        Console.WriteLine("|{0,-40}|{1,-12}|{2,-12}|{3,-12}|{4,-12}|",
+            new string('-', 40),
+            separator,
+            separator,
+            separator,
+            separator);
+        foreach (var company in companies)
+        {
+            Console.WriteLine("|{0,-40}|{1,-12}|{2,-12}|{3,-12}|{4,-12}|",
+                company.CompanyName,
+                company.Count,
+                (int)Math.Round(company.Rating),
+                (int)Math.Round(company.Comments),
+                (int)Math.Round(company.Views));
+        }
+
+        Console.WriteLine($"\nВсего компаний: {companies.Count}");
+
+        // Статистика по авторам
+        var authors = allArticles.GroupBy(a => a.Author)
+            .Select(g => new
+            {
+                Author = g.Key,
+                Count = g.Count(),
+                Rating = g.Average(p => p.Rating),
+                Comments = g.Average(p => p.Comments),
+                Views = g.Average(p => p.Views)
+            })
+            .OrderByDescending(x => x.Count)
+            .ThenByDescending(x => x.Rating)
+            .ThenByDescending(x => x.Comments)
+            .ThenByDescending(x => x.Views)
+            .ThenBy(x => x.Author)
+            .ToList();
+        Console.WriteLine("\nСтатистика по авторам:");
+        Console.WriteLine();
+        Console.WriteLine("|{0,-40}|{1,-12}|{2,-12}|{3,-12}|{4,-12}|",
+            "Автор",
+            "Статей",
+            "Рейтинг",
+            "Комментариев",
+            "Просмотров");
+        Console.WriteLine("|{0,-40}|{1,-12}|{2,-12}|{3,-12}|{4,-12}|",
+            new string('-', 40),
+            separator,
+            separator,
+            separator,
+            separator);
+        foreach (var author in authors)
+        {
+            Console.WriteLine("|{0,-40}|{1,-12}|{2,-12}|{3,-12}|{4,-12}|",
+                author.Author,
+                author.Count,
+                (int)Math.Round(author.Rating),
+                (int)Math.Round(author.Comments),
+                (int)Math.Round(author.Views));
+        }
+
+        Console.WriteLine($"\nВсего авторов: {authors.Count}");
+
+        // Весь список статей
+        var articles = allArticles
+            .OrderByDescending(x => x.Rating)
+            .ThenByDescending(x => x.Comments)
+            .ThenByDescending(x => x.Views)
+            .ThenBy(x => x.CompanyName)
+            .ThenBy(x => x.Author)
+            .ToList();
+        Console.WriteLine("\nВесь список статей:");
+        Console.WriteLine();
+        Console.WriteLine("|{0,-40}|{1,-30}|{2,-130}|{3,-12}|{4,-12}|{5,-12}|",
+            "Компания",
+            "Автор",
+            "Статья",
+            "Рейтинг",
+            "Комментариев",
+            "Просмотров");
+        Console.WriteLine("|{0,-40}|{1,-30}|{2,-130}|{3,-12}|{4,-12}|{5,-12}|",
+            new string('-', 40),
+            new string('-', 30),
+            new string('-', 130),
+            separator,
+            separator,
+            separator);
+        foreach (var article in articles)
+        {
+            Console.WriteLine("|{0,-40}|{1,-30}|{2,-130}|{3,-12}|{4,-12}|{5,-12}|",
+                article.CompanyName,
+                article.Author,
+                article.Title,
+                article.Rating,
+                article.Comments,
+                article.Views);
+        }
+
+        Console.WriteLine($"\nВсего статей: {articles.Count}");
     }
 
-    // 3. Самые обсуждаемые статьи
-    var mostCommented = articles.OrderByDescending(a => a.Comments).Take(5);
-    Console.WriteLine("\n3. Топ-5 статей по количеству комментариев:");
-    foreach (var article in mostCommented)
+    private static int ConvertToInt(string? source)
     {
-      Console.WriteLine($"   - {article.Title} (Комментарии: {article.Comments})");
+        if (string.IsNullOrEmpty(source))
+        {
+            return 0;
+        }
+
+        var multiplexer = 1;
+
+        if (source.EndsWith("K"))
+        {
+            multiplexer = 1_000;
+        }
+        else if (source.EndsWith("M"))
+        {
+            multiplexer = 1_000_000;
+        }
+
+
+        if (decimal.TryParse(source
+                .Replace(" ", "")
+                .Replace("\u00A0", "")
+                .Replace("K", "")
+                .Replace("M", ""), out var result))
+        {
+            return (int)(result * multiplexer);
+        }
+
+        return 0;
     }
-
-    // 4. Самые просматриваемые статьи
-    var mostViewed = articles.OrderByDescending(a => a.Views).Take(5);
-    Console.WriteLine("\n4. Топ-5 статей по просмотрам:");
-    foreach (var article in mostViewed)
-    {
-      Console.WriteLine($"   - {article.Title} (Просмотры: {article.Views})");
-    }
-
-    // 5. Авторы с наибольшим количеством статей
-    var topAuthors = articles.GroupBy(a => a.Author)
-      .Select(g => new { Author = g.Key, Count = g.Count() })
-      .OrderByDescending(x => x.Count)
-      .Take(5);
-    Console.WriteLine("\n5. Топ-5 авторов по количеству статей:");
-    foreach (var author in topAuthors)
-    {
-      Console.WriteLine($"   - {author.Author} (Статей: {author.Count})");
-    }
-
-    // 6. Распределение статей по месяцам
-    var articlesByMonth = articles.Where(a => a.Date.HasValue)
-      .GroupBy(a => new { a.Date.Value.Year, a.Date.Value.Month })
-      .Select(g => new { Year = g.Key.Year, Month = g.Key.Month, Count = g.Count() })
-      .OrderBy(x => x.Year)
-      .ThenBy(x => x.Month);
-    Console.WriteLine("\n6. Количество статей по месяцам:");
-    foreach (var group in articlesByMonth)
-    {
-      Console.WriteLine($"   - {group.Year}-{group.Month:D2}: {group.Count} статей");
-    }
-
-    // 7. Средние показатели
-    Console.WriteLine("\n7. Средние показатели:");
-    Console.WriteLine($"   - Средний рейтинг: {articles.Average(a => a.Rating):F2}");
-    Console.WriteLine($"   - Среднее количество просмотров: {articles.Average(a => a.Views):F0}");
-    Console.WriteLine($"   - Среднее количество комментариев: {articles.Average(a => a.Comments):F0}");
-
-    // 8. Общая сумма просмотров и комментариев
-    Console.WriteLine("\n8. Суммарные показатели:");
-    Console.WriteLine($"   - Всего просмотров: {articles.Sum(a => a.Views)}");
-    Console.WriteLine($"   - Всего комментариев: {articles.Sum(a => a.Comments)}");
-
-    // 9. Статья с максимальным рейтингом
-    var bestArticle = articles.OrderByDescending(a => a.Rating).FirstOrDefault();
-    if (bestArticle != null)
-    {
-      Console.WriteLine("\n9. Статья с максимальным рейтингом:");
-      Console.WriteLine($"   - Заголовок: {bestArticle.Title}");
-      Console.WriteLine($"   - Автор: {bestArticle.Author}");
-      Console.WriteLine($"   - Рейтинг: {bestArticle.Rating}");
-      Console.WriteLine($"   - Ссылка: {bestArticle.Link}");
-    }
-
-    // 10. Статья с минимальным рейтингом
-    var worstArticle = articles.OrderBy(a => a.Rating).FirstOrDefault();
-    if (worstArticle != null)
-    {
-      Console.WriteLine("\n10. Статья с минимальным рейтингом:");
-      Console.WriteLine($"   - Заголовок: {worstArticle.Title}");
-      Console.WriteLine($"   - Автор: {worstArticle.Author}");
-      Console.WriteLine($"   - Рейтинг: {worstArticle.Rating}");
-      Console.WriteLine($"   - Ссылка: {worstArticle.Link}");
-    }
-  }
 }
 
 public class Article
 {
-  public string Title { get; set; }
-  public string Link { get; set; }
-  public string Author { get; set; }
-  public DateTime? Date { get; set; }
-  public int Rating { get; set; }
-  public int Views { get; set; }
-  public int Comments { get; set; }
+    public string Id { get; set; }
+    public string Title { get; set; }
+    public string Link { get; set; }
+    public string Author { get; set; }
+    public DateTime? Date { get; set; }
+    public int Rating { get; set; }
+    public int Views { get; set; }
+    public int Comments { get; set; }
+    public string CompanyName { get; set; }
 }

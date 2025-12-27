@@ -1,4 +1,4 @@
-﻿using HtmlAgilityPack;
+using HtmlAgilityPack;
 
 namespace DotNextParser;
 
@@ -120,9 +120,9 @@ class Program
   private static void PrintPresentations(List<Presentation> presentations)
   {
     // Вывод таблицы в консоль
-    Console.WriteLine(new string('-', 177));
+    Console.WriteLine();
     Console.WriteLine("|{0,-40}|{1,-35}|{2,-98}|", "Название компании", "Спикер", "Доклад");
-    Console.WriteLine(new string('-', 177));
+    Console.WriteLine("|{0,-40}|{1,-35}|{2,-98}|", new string('-', 40), new string('-', 35), new string('-', 98));
 
     foreach (var entry in presentations
                .OrderBy(x => x.Company)
@@ -131,22 +131,22 @@ class Program
     {
       Console.WriteLine("|{0,-40}|{1,-35}|{2,-98}|", entry.Company, entry.Speaker, entry.Title);
     }
-    Console.WriteLine(new string('-', 177));
+    Console.WriteLine();
     Console.WriteLine("Всего: {0} докладов", presentations.Count);
   }
 
   static void PrintReport(List<CompanyReport> report)
   {
     // Вывод таблицы в консоль
-    Console.WriteLine(new string('-', 63));
+    Console.WriteLine();
     Console.WriteLine("|{0,-40}|{1,-20}|", "Название компании", "Количество докладов");
-    Console.WriteLine(new string('-', 63));
+    Console.WriteLine("|{0,-40}|{1,-20}|", new string('-', 40), new string('-', 20));
 
     foreach (var entry in report)
     {
       Console.WriteLine("|{0,-40}|{1,-20}|", entry.CompanyName, entry.TalkCount);
     }
-    Console.WriteLine(new string('-', 63));
+    Console.WriteLine();
     Console.WriteLine("Всего: {0} компаний", report.Count);
   }
 }
